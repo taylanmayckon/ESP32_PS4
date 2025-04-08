@@ -1,0 +1,2 @@
+source C:/Caatronics/ESP32_PS4/build/bootloader/gdbinit/symbols
+source C:/Caatronics/ESP32_PS4/build/bootloader/gdbinit/connect
