@@ -1,57 +1,49 @@
-// Example file - Public Domain
-// Need help? https://tinyurl.com/bluepad32-help
-
 #include <string.h>
-
+#include <freertos/FreeRTOS.h>
+#include "freertos/task.h"
 #include <uni.h>
 
+// Isso aqui só mantive do exemplo
 // Custom "instance"
 typedef struct my_platform_instance_s {
     uni_gamepad_seat_t gamepad_seat;  // which "seat" is being used
 } my_platform_instance_t;
 
-// Declarations
+// Declarations (Só mantive do exemplo)
 static void trigger_event_on_gamepad(uni_hid_device_t* d);
 static my_platform_instance_t* get_my_platform_instance(uni_hid_device_t* d);
 
-//
-// Platform Overrides
-//
+// Variáveis globais
+int left_x, left_y, right_x, right_y;
+
+
+void TaskPrintAxis(){
+    while(1){
+        logi("ESQUERDO-> X: %d | Y: %d\n", left_x, left_y);
+        logi("DIREITO-> X: %d | Y: %d\n\n\n", right_x, right_y);
+        vTaskDelay(100/portTICK_PERIOD_MS);
+    }
+}
+
+// É nessa função que vão as configurações, FreeRTOS e afins
 static void my_platform_init(int argc, const char** argv) {
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
-    logi("custom: init()\n");
+    logi("Bluepad32: Inicializando configuração\n");
 
-#if 0
-    uni_gamepad_mappings_t mappings = GAMEPAD_DEFAULT_MAPPINGS;
-
-    // Inverted axis with inverted Y in RY.
-    mappings.axis_x = UNI_GAMEPAD_MAPPINGS_AXIS_RX;
-    mappings.axis_y = UNI_GAMEPAD_MAPPINGS_AXIS_RY;
-    mappings.axis_ry_inverted = true;
-    mappings.axis_rx = UNI_GAMEPAD_MAPPINGS_AXIS_X;
-    mappings.axis_ry = UNI_GAMEPAD_MAPPINGS_AXIS_Y;
-
-    // Invert A & B
-    mappings.button_a = UNI_GAMEPAD_MAPPINGS_BUTTON_B;
-    mappings.button_b = UNI_GAMEPAD_MAPPINGS_BUTTON_A;
-
-    uni_gamepad_set_mappings(&mappings);
-#endif
-    //    uni_bt_service_set_enabled(true);
+    // Criando a task que vai fazer o print dos valores dos eixos
+    xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
 }
 
 static void my_platform_on_init_complete(void) {
-    logi("custom: on_init_complete()\n");
+    logi("Bluepad32: Configuração concluída\n");
 
-    // Safe to call "unsafe" functions since they are called from BT thread
-
-    // Start scanning
+    // Inicia a busca por dispositivos
     uni_bt_start_scanning_and_autoconnect_unsafe();
     uni_bt_allow_incoming_connections(true);
 
-    // Based on runtime condition, you can delete or list the stored BT keys.
+    // Baseada no tempo de execução, isso deleta ou lista as chaves Bluetooth armazenadas
     if (1)
         uni_bt_del_keys_unsafe();
     else
@@ -76,15 +68,15 @@ static uni_error_t my_platform_on_device_discovered(bd_addr_t addr, const char* 
 }
 
 static void my_platform_on_device_connected(uni_hid_device_t* d) {
-    logi("custom: device connected: %p\n", d);
+    logi("Bluepad32: Dispositivo conectado: %p\n", d);
 }
 
 static void my_platform_on_device_disconnected(uni_hid_device_t* d) {
-    logi("custom: device disconnected: %p\n", d);
+    logi("Bluepad32: Dispositivo desconectado: %p\n", d);
 }
 
 static uni_error_t my_platform_on_device_ready(uni_hid_device_t* d) {
-    logi("custom: device ready: %p\n", d);
+    logi("Bluepad32: Dispositivo pronto: %p\n", d);
     my_platform_instance_t* ins = get_my_platform_instance(d);
     ins->gamepad_seat = GAMEPAD_SEAT_A;
 
@@ -93,60 +85,41 @@ static uni_error_t my_platform_on_device_ready(uni_hid_device_t* d) {
 }
 
 static void my_platform_on_controller_data(uni_hid_device_t* d, uni_controller_t* ctl) {
-    static uint8_t leds = 0;
-    static uint8_t enabled = true;
     static uni_controller_t prev = {0};
+    
+    // Variável para armazenar as informações recebidas do controle
+    // Basicamente vai em:
+    // componentes/bluepad32/include/controller/uni_gamepad.h
+    // Lá tem todas as structs de valores que você pode receber
     uni_gamepad_t* gp;
+    uni_gamepad_mappings_t* tg;
 
-    // Optimization to avoid processing the previous data so that the console
-    // does not get spammed with a lot of logs, but remove it from your project.
+    // Comenta isso aqui no projeto final, no exemplo diz que é para não ter
+    // spam desnecessário de logs
     if (memcmp(&prev, ctl, sizeof(*ctl)) == 0) {
         return;
     }
     prev = *ctl;
-    // Print device Id before dumping gamepad.
-    // This could be very CPU intensive and might crash the ESP32.
-    // Remove these 2 lines in production code.
-    //    logi("(%p), id=%d, \n", d, uni_hid_device_get_idx_for_instance(d));
-    //    uni_controller_dump(ctl);
 
-    switch (ctl->klass) {
-        case UNI_CONTROLLER_CLASS_GAMEPAD:
-            gp = &ctl->gamepad;
-
-            // Debugging
-            // Axis ry: control rumble
-            if ((gp->buttons & BUTTON_A) && d->report_parser.play_dual_rumble != NULL) {
-                d->report_parser.play_dual_rumble(d, 0 /* delayed start ms */, 250 /* duration ms */,
-                                                  255 /* weak magnitude */, 0 /* strong magnitude */);
-            }
-            // Buttons: Control LEDs On/Off
-            if ((gp->buttons & BUTTON_B) && d->report_parser.set_player_leds != NULL) {
-                d->report_parser.set_player_leds(d, leds++ & 0x0f);
-            }
-            // Axis: control RGB color
-            if ((gp->buttons & BUTTON_X) && d->report_parser.set_lightbar_color != NULL) {
-                uint8_t r = (gp->axis_x * 256) / 512;
-                uint8_t g = (gp->axis_y * 256) / 512;
-                uint8_t b = (gp->axis_rx * 256) / 512;
-                d->report_parser.set_lightbar_color(d, r, g, b);
-            }
-
-            // Toggle Bluetooth connections
-            if ((gp->buttons & BUTTON_SHOULDER_L) && enabled) {
-                logi("*** Stop scanning\n");
-                uni_bt_stop_scanning_safe();
-                enabled = false;
-            }
-            if ((gp->buttons & BUTTON_SHOULDER_R) && !enabled) {
-                logi("*** Start scanning\n");
-                uni_bt_start_scanning_and_autoconnect_safe();
-                enabled = true;
-            }
-            break;
-        default:
-            break;
+    // Essa função é para garantir que só vai executar ações caso
+    // o que tenha se conectado seja um controle do tipo GAMEPAD
+    // no caso o controle de PS4, se for testar algo diferente, coemnta o if
+    if(ctl->klass != UNI_CONTROLLER_CLASS_GAMEPAD){
+        return;
     }
+
+    // Mudando a cor do led do controle para verde (8 bits)
+    //                                     r,  g,  0
+    d->report_parser.set_lightbar_color(d, 0, 255, 0);
+    
+    // Extrai os dados do controle
+    gp = &ctl->gamepad;
+
+    // Valores dos analógicos
+    left_x = gp->axis_x;
+    left_y = gp->axis_y;
+    right_x = gp->axis_rx;
+    right_y = gp->axis_ry;
 }
 
 static const uni_property_t* my_platform_get_property(uni_property_idx_t idx) {

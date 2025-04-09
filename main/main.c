@@ -1,6 +1,3 @@
-// Example file - Public Domain
-// Need help? http://bit.ly/bluepad32-help
-
 #include <stdlib.h>
 
 #include <btstack_port_esp32.h>
