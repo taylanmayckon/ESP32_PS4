@@ -100,7 +100,7 @@ static void my_platform_init(int argc, const char** argv) {
     logi("Bluepad32: Inicializando configuração\n");
 
     // Criando a task que vai fazer o print dos valores dos eixos
-    xTaskCreate(&PWMConfigurationAndValueUpdate "PWM configuration", 4096, NULL, 1, NULL);
+    xTaskCreate(&PWMConfigurationAndValueUpdate, "PWM configuration", 4096, NULL, 1, NULL);
     xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
 }
 
