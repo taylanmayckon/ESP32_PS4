@@ -1,7 +1,29 @@
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include "freertos/task.h"
+#include "freertos/timers.h"
+#include "driver/gpio.h"
 #include <uni.h>
+#include <esp_log.h>
+#include <esp_err.h>
+#include "driver/ledc.h"
+
+/////////////
+// Definição da GPIO utilizada no controle das placas
+#define PDIG1 GPIO_NUM_18
+#define PWM1 GPIO_NUM_4
+#define PDIG2 GPIO_NUM_19
+#define PWM2 GPIO_NUM_21
+
+// Definição dos parâmetros do PWM
+#define LEDC_TIMER LEDC_TIMER_0
+#define LEDC_MODE LEDC_HIGH_SPEED_MODE
+#define LEDC_DUTY_RES LEDC_TIMER_13_BIT // Resolução do PWM a ser gerado (VALOR DO TOP)
+#define TOP_PWM 8191 // Definindo o TOP do PWM (2^13 - 1)
+#define LEDC_FREQUENCY (4000) // Freq do PWM em Hz
+#define LEDC_CHANNEL_PWM1 LEDC_CHANNEL_0
+#define LEDC_CHANNEL_PWM2 LEDC_CHANNEL_1
+////////
 
 // Isso aqui só mantive do exemplo
 // Custom "instance"
@@ -16,12 +38,57 @@ static my_platform_instance_t* get_my_platform_instance(uni_hid_device_t* d);
 // Variáveis globais
 int left_x, left_y, right_x, right_y;
 
+void PWMConfigurationAndValueUpdate(void *pvParameter) {
+    // Configurando o timer do LEDC PWM
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_MODE,
+        .duty_resolution = LEDC_DUTY_RES,
+        .timer_num = LEDC_TIMER,
+        .freq_hz = LEDC_FREQUENCY,
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-void TaskPrintAxis(){
+    // PWM1
+    ledc_channel_config_t ledc_channel_pwm1 = {
+        .speed_mode = LEDC_MODE,
+        .channel = LEDC_CHANNEL_PWM1,
+        .timer_sel = LEDC_TIMER,
+        .intr_type = LEDC_INTR_DISABLE,
+        .gpio_num = PWM1,
+        .duty = 0,
+        .hpoint = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_pwm1));
+
+    // PWM2
+    ledc_channel_config_t ledc_channel_pwm2 = {
+        .speed_mode = LEDC_MODE, 
+        .channel = LEDC_CHANNEL_PWM2,
+        .timer_sel = LEDC_TIMER,
+        .intr_type = LEDC_INTR_DISABLE,
+        .gpio_num = PWM2,
+        .duty = 0,
+        .hpoint = 0
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_pwm2));
+
+    while (1) {
+        uint32_t duty_int = (uint32_t)((left_x/512.0)*TOP_PWM);
+        
+        logi("Dir: %f Esq: %f\n", (left_x/512.0)*3.3);
+
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, duty_int));
+        ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
+        vTaskDelay(pdMS_TO_TICKS(500));  // Espera 500ms
+    }
+}
+
+void TaskPrintAxis() {
     while(1){
         logi("ESQUERDO-> X: %d | Y: %d\n", left_x, left_y);
         logi("DIREITO-> X: %d | Y: %d\n\n\n", right_x, right_y);
-        vTaskDelay(100/portTICK_PERIOD_MS);
+        vTaskDelay(700/portTICK_PERIOD_MS);
     }
 }
 
@@ -33,6 +100,7 @@ static void my_platform_init(int argc, const char** argv) {
     logi("Bluepad32: Inicializando configuração\n");
 
     // Criando a task que vai fazer o print dos valores dos eixos
+    xTaskCreate(&PWMConfigurationAndValueUpdate "PWM configuration", 4096, NULL, 1, NULL);
     xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
 }
 
@@ -104,7 +172,7 @@ static void my_platform_on_controller_data(uni_hid_device_t* d, uni_controller_t
     // Essa função é para garantir que só vai executar ações caso
     // o que tenha se conectado seja um controle do tipo GAMEPAD
     // no caso o controle de PS4, se for testar algo diferente, coemnta o if
-    if(ctl->klass != UNI_CONTROLLER_CLASS_GAMEPAD){
+    if(ctl->klass != UNI_CONTROLLER_CLASS_GAMEPAD) {
         return;
     }
 
