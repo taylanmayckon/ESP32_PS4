@@ -10,8 +10,8 @@
 
 /////////////
 // Definição da GPIO utilizada no controle das placas
-#define PDIG1 GPIO_NUM_18
-#define PWM1 GPIO_NUM_4
+#define PDIG1 GPIO_NUM_4
+#define PWM1 GPIO_NUM_18
 #define PDIG2 GPIO_NUM_19
 #define PWM2 GPIO_NUM_21
 
@@ -73,11 +73,47 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
     };
     ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_pwm2));
 
-    while (1) {
-        uint32_t duty_int = (uint32_t)((left_x/512.0)*TOP_PWM);
-        
-        logi("Dir: %f Esq: %f\n", (left_x/512.0)*3.3);
 
+    // PDIG1
+    ESP_ERROR_CHECK(gpio_set_direction(PDIG1, GPIO_MODE_OUTPUT));
+
+    // PDIG2
+    ESP_ERROR_CHECK(gpio_set_direction(PDIG2, GPIO_MODE_OUTPUT));
+
+    bool rot_direction = 1;
+    uint32_t duty_int;
+
+    while (1) {
+        // Dessa forma, o código funciona da seguinte maneira:
+        // -> left_x assume valor negativo:
+        //    PDIG1 vai para nível alto e o PWM vai de 0 a 100%
+        // -> left_x assume valor positivo:
+        //    PDIG1 vai para nível baixo e o PWM vai de 0 a 100%
+
+
+        if(left_x <= 0){
+            rot_direction = 1;
+            duty_int = (uint32_t)((-left_x/512.0)*TOP_PWM);
+        }
+        else{
+            rot_direction = 0;
+            duty_int = (uint32_t)((left_x/512.0)*TOP_PWM);
+        }
+
+        logi("Direção: ");
+        if(rot_direction){
+            logi("Frente\n");
+        }
+        else{
+            logi("Trás\n");
+        }
+
+        logi("PWM: %d \n\n", duty_int);
+
+        // Atualiza o PDIG1
+        ESP_ERROR_CHECK(gpio_set_level(PDIG1, rot_direction));
+
+        // Atualiza o PWM1
         ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, duty_int));
         ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
         vTaskDelay(pdMS_TO_TICKS(500));  // Espera 500ms
@@ -101,7 +137,7 @@ static void my_platform_init(int argc, const char** argv) {
 
     // Criando a task que vai fazer o print dos valores dos eixos
     xTaskCreate(&PWMConfigurationAndValueUpdate, "PWM configuration", 4096, NULL, 1, NULL);
-    xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
+    //xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
 }
 
 static void my_platform_on_init_complete(void) {
