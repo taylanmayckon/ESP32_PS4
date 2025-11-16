@@ -23,6 +23,9 @@
 #define LEDC_FREQUENCY (4000) // Freq do PWM em Hz
 #define LEDC_CHANNEL_PWM1 LEDC_CHANNEL_0
 #define LEDC_CHANNEL_PWM2 LEDC_CHANNEL_1
+
+// Definição do valor máximo do eixo analógico
+#define AXIS_MAX 512.0
 ////////
 
 // Isso aqui só mantive do exemplo
@@ -37,6 +40,14 @@ static my_platform_instance_t* get_my_platform_instance(uni_hid_device_t* d);
 
 // Variáveis globais
 int left_x, left_y, right_x, right_y;
+
+// Funcao de deadzone para o controle
+int apply_deadzone(int value, int deadzone) {
+    if((value > -deadzone) && (value < deadzone)){
+        value = 0;
+    }
+    return value;
+}
 
 void PWMConfigurationAndValueUpdate(void *pvParameter) {
     // Configurando o timer do LEDC PWM
@@ -80,8 +91,12 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
     // PDIG2
     ESP_ERROR_CHECK(gpio_set_direction(PDIG2, GPIO_MODE_OUTPUT));
 
-    bool rot_direction = 1;
+    bool dir_esq = 1;
+    bool dir_dir = 1;
+    bool prev_dir_esq = dir_esq;
+    bool prev_dir_dir = dir_dir;
     uint32_t duty_int;
+    int deadzone = 40; // Testa um valor para deadzone futuramente
 
     while (1) {
         // Dessa forma, o código funciona da seguinte maneira:
@@ -89,34 +104,61 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
         //    PDIG1 vai para nível alto e o PWM vai de 0 a 100%
         // -> left_x assume valor positivo:
         //    PDIG1 vai para nível baixo e o PWM vai de 0 a 100%
+        
 
+        // Deadzone do analogico para evitar ruido
+        float x_axis = apply_deadzone(left_x, deadzone);
+        float y_axis = apply_deadzone(left_y, deadzone);
 
-        if(left_x <= 0){
-            rot_direction = 1;
-            duty_int = (uint32_t)((-left_x/512.0)*TOP_PWM);
+        // Intensidade da curva
+        float k = 5.0;
+        float curva = (float)x_axis/k;
+
+        // Valores para os motores
+        float m_esq = y_axis + curva;
+        float m_dir = y_axis - curva;
+
+        // Limitando os valores máximos e mínimos
+        if (m_esq > AXIS_MAX) m_esq = AXIS_MAX;
+        if (m_esq < -AXIS_MAX) m_esq = -AXIS_MAX;
+        if (m_dir > AXIS_MAX) m_dir = AXIS_MAX;
+        if (m_dir < -AXIS_MAX) m_dir = -AXIS_MAX;
+
+        // Calculo dos PWMs
+        uint32_t pwm_esq = (uint32_t)((fabs(m_esq)/AXIS_MAX)*TOP_PWM);
+        uint32_t pwm_dir = (uint32_t)((fabs(m_dir)/AXIS_MAX)*TOP_PWM); 
+
+        // Booleanos para direcao
+        // -> MOTOR ESQUERDO
+        dir_esq = (m_esq <= 0); 
+        // -> MOTOR DIREITO
+        dir_dir = (m_dir <= 0); 
+        
+
+        // Para evitar curto na Ponte H
+        if(prev_dir_esq != dir_esq || prev_dir_dir != dir_dir){
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, 0));
+            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
+            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM2, 0));
+            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM2));
+            vtaskdelay(pdMS_TO_TICKS(10)); // Delay de segurança contra os curtos
         }
-        else{
-            rot_direction = 0;
-            duty_int = (uint32_t)((left_x/512.0)*TOP_PWM);
-        }
+        prev_dir_esq = dir_esq;
+        prev_dir_dir = dir_dir; 
 
-        logi("Direção: ");
-        if(rot_direction){
-            logi("Frente\n");
-        }
-        else{
-            logi("Trás\n");
-        }
 
-        logi("PWM: %d \n\n", duty_int);
 
-        // Atualiza o PDIG1
-        ESP_ERROR_CHECK(gpio_set_level(PDIG1, rot_direction));
-
-        // Atualiza o PWM1
-        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, duty_int));
+        // -> MOTOR ESQUERDO
+        ESP_ERROR_CHECK(gpio_set_level(PDIG1, dir_esq)); // 1->frente, 0->ré
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, pwm_esq)); 
         ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
-        vTaskDelay(pdMS_TO_TICKS(500));  // Espera 500ms
+
+        // -> MOTOR DIREITO
+        ESP_ERROR_CHECK(gpio_set_level(PDIG2, !dir_dir)); // Motor espelhado (0->frente, 1->ré)
+        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM2, pwm_dir)); 
+        ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM2));
+
+        vTaskDelay(pdMS_TO_TICKS(20)); 
     }
 }
 
