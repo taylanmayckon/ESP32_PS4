@@ -7,6 +7,7 @@
 #include <esp_log.h>
 #include <esp_err.h>
 #include "driver/ledc.h"
+#include <math.h>
 
 /////////////
 // Definição da GPIO utilizada no controle das placas
@@ -95,7 +96,6 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
     bool dir_dir = 1;
     bool prev_dir_esq = dir_esq;
     bool prev_dir_dir = dir_dir;
-    uint32_t duty_int;
     int deadzone = 40; // Testa um valor para deadzone futuramente
 
     while (1) {
@@ -141,7 +141,7 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
             ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
             ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM2, 0));
             ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM2));
-            vtaskdelay(pdMS_TO_TICKS(10)); // Delay de segurança contra os curtos
+            vTaskDelay(pdMS_TO_TICKS(10)); // Delay de segurança contra os curtos
         }
         prev_dir_esq = dir_esq;
         prev_dir_dir = dir_dir; 
