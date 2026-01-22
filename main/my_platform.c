@@ -8,24 +8,35 @@
 #include <esp_err.h>
 #include "driver/ledc.h"
 #include <math.h>
+#include <stdio.h>
 
 /////////////
-// Definição da GPIO utilizada no controle das placas
-#define PDIG1 GPIO_NUM_4
-#define PWM1 GPIO_NUM_18
-#define PDIG2 GPIO_NUM_19
-#define PWM2 GPIO_NUM_21
+// ===== DEFINIÇÃO DE PINOS – BTS7960 =====
 
-// Definição dos parâmetros do PWM
-#define LEDC_TIMER LEDC_TIMER_0
-#define LEDC_MODE LEDC_HIGH_SPEED_MODE
-#define LEDC_DUTY_RES LEDC_TIMER_13_BIT // Resolução do PWM a ser gerado (VALOR DO TOP)
-#define TOP_PWM 8191 // Definindo o TOP do PWM (2^13 - 1)
-#define LEDC_FREQUENCY (4000) // Freq do PWM em Hz
-#define LEDC_CHANNEL_PWM1 LEDC_CHANNEL_0
-#define LEDC_CHANNEL_PWM2 LEDC_CHANNEL_1
+// MOTOR ESQUERDO
+#define ESQ_RPWM GPIO_NUM_18
+#define ESQ_LPWM GPIO_NUM_19
+#define ESQ_REN  GPIO_NUM_4
+#define ESQ_LEN  GPIO_NUM_5
 
-// Definição do valor máximo do eixo analógico
+// MOTOR DIREITO
+#define DIR_RPWM GPIO_NUM_21
+#define DIR_LPWM GPIO_NUM_22
+#define DIR_REN  GPIO_NUM_23
+#define DIR_LEN  GPIO_NUM_25
+
+// ===== PWM =====
+#define LEDC_TIMER        LEDC_TIMER_0
+#define LEDC_MODE         LEDC_HIGH_SPEED_MODE
+#define LEDC_DUTY_RES     LEDC_TIMER_13_BIT
+#define TOP_PWM           8191
+#define LEDC_FREQUENCY    4000
+
+#define LEDC_CH_ESQ_R     LEDC_CHANNEL_0
+#define LEDC_CH_ESQ_L     LEDC_CHANNEL_1
+#define LEDC_CH_DIR_R     LEDC_CHANNEL_2
+#define LEDC_CH_DIR_L     LEDC_CHANNEL_3
+
 #define AXIS_MAX 512.0
 ////////
 
@@ -50,8 +61,10 @@ int apply_deadzone(int value, int deadzone) {
     return value;
 }
 
+// ===== TASK DE CONTROLE DOS MOTORES =====
 void PWMConfigurationAndValueUpdate(void *pvParameter) {
-    // Configurando o timer do LEDC PWM
+
+    // Timer PWM
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_MODE,
         .duty_resolution = LEDC_DUTY_RES,
@@ -61,104 +74,149 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
     };
     ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    // PWM1
-    ledc_channel_config_t ledc_channel_pwm1 = {
-        .speed_mode = LEDC_MODE,
-        .channel = LEDC_CHANNEL_PWM1,
-        .timer_sel = LEDC_TIMER,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = PWM1,
-        .duty = 0,
-        .hpoint = 0
+    // Configuração dos 4 canais PWM
+    ledc_channel_config_t channels[] = {
+        {
+            .gpio_num = ESQ_RPWM,
+            .speed_mode = LEDC_MODE,
+            .channel = LEDC_CH_ESQ_R,
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = ESQ_LPWM,
+            .speed_mode = LEDC_MODE,
+            .channel = LEDC_CH_ESQ_L,
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = DIR_RPWM,
+            .speed_mode = LEDC_MODE,
+            .channel = LEDC_CH_DIR_R,
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER,
+            .duty = 0,
+            .hpoint = 0
+        },
+        {
+            .gpio_num = DIR_LPWM,
+            .speed_mode = LEDC_MODE,
+            .channel = LEDC_CH_DIR_L,
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER,
+            .duty = 0,
+            .hpoint = 0
+        }
     };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_pwm1));
 
-    // PWM2
-    ledc_channel_config_t ledc_channel_pwm2 = {
-        .speed_mode = LEDC_MODE, 
-        .channel = LEDC_CHANNEL_PWM2,
-        .timer_sel = LEDC_TIMER,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = PWM2,
-        .duty = 0,
-        .hpoint = 0
-    };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel_pwm2));
+    for (int i = 0; i < 4; i++)
+        ESP_ERROR_CHECK(ledc_channel_config(&channels[i]));
 
+    // ENABLES, sempre ativados, cada enable ativa um lado da ponte H
+    gpio_set_direction(ESQ_REN, GPIO_MODE_OUTPUT);
+    gpio_set_direction(ESQ_LEN, GPIO_MODE_OUTPUT);
+    gpio_set_direction(DIR_REN, GPIO_MODE_OUTPUT);
+    gpio_set_direction(DIR_LEN, GPIO_MODE_OUTPUT);
 
-    // PDIG1
-    ESP_ERROR_CHECK(gpio_set_direction(PDIG1, GPIO_MODE_OUTPUT));
+    gpio_set_level(ESQ_REN, 1);
+    gpio_set_level(ESQ_LEN, 1);
+    gpio_set_level(DIR_REN, 1);
+    gpio_set_level(DIR_LEN, 1);
 
-    // PDIG2
-    ESP_ERROR_CHECK(gpio_set_direction(PDIG2, GPIO_MODE_OUTPUT));
+    // Variáveis que guardam a direção atual e última penúltima direção
+    bool dir_esq = 1, dir_dir = 1, bool prev_dir_esq = 1, prev_dir_dir = 1;
 
-    bool dir_esq = 1;
-    bool dir_dir = 1;
-    bool prev_dir_esq = dir_esq;
-    bool prev_dir_dir = dir_dir;
-    int deadzone = 40; // Testa um valor para deadzone futuramente
+    // Valor de tolerância, se o joystick mandar um sinal menor que esse nada acontece, isso evita que o robô se mova erraticamente por conta de ruído
+    int deadzone = 40;
 
     while (1) {
-        // Dessa forma, o código funciona da seguinte maneira:
-        // -> left_x assume valor negativo:
-        //    PDIG1 vai para nível alto e o PWM vai de 0 a 100%
-        // -> left_x assume valor positivo:
-        //    PDIG1 vai para nível baixo e o PWM vai de 0 a 100%
-        
-
-        // Deadzone do analogico para evitar ruido
+        // Se o valor estiver entre -deadzone e +deadzone, trata como se o controle estivesse exatamente no centro = 0
         float x_axis = apply_deadzone(left_x, deadzone);
         float y_axis = apply_deadzone(left_y, deadzone);
 
-        // Intensidade da curva
+        // K controla o quão suave o robô faz curvas
         float k = 5.0;
-        float curva = (float)x_axis/k;
+        // Variável curva pode ser negativa ou positiva dependendo de x_axis pois: -512 < x_axis < 512
+        float curva = x_axis / k;
 
-        // Valores para os motores
+        // Caso valor de curva seja positivo, motor esquerdo gira mais rápido que o direito, curva pra direita
+        // Caso valor de curva seja negativo, motor direito gira mais rápido que o esquerdo, curva pra esquerda
         float m_esq = y_axis + curva;
         float m_dir = y_axis - curva;
 
-        // Limitando os valores máximos e mínimos
+        // Garante que os valores não passem do máximo permitido
         if (m_esq > AXIS_MAX) m_esq = AXIS_MAX;
         if (m_esq < -AXIS_MAX) m_esq = -AXIS_MAX;
         if (m_dir > AXIS_MAX) m_dir = AXIS_MAX;
         if (m_dir < -AXIS_MAX) m_dir = -AXIS_MAX;
 
-        // Calculo dos PWMs
-        uint32_t pwm_esq = (uint32_t)((fabs(m_esq)/AXIS_MAX)*TOP_PWM);
-        uint32_t pwm_dir = (uint32_t)((fabs(m_dir)/AXIS_MAX)*TOP_PWM); 
+        // Cálculo do PWM de cada um dos motores, note que um único sinal PWM define direção(- ou +) e intensidade(valor do PWM) pra cada motor
+        uint32_t pwm_esq = (uint32_t)((fabs(m_esq) / AXIS_MAX) * TOP_PWM);
+        uint32_t pwm_dir = (uint32_t)((fabs(m_dir) / AXIS_MAX) * TOP_PWM);
 
-        // Booleanos para direcao
-        // -> MOTOR ESQUERDO
-        dir_esq = (m_esq <= 0); 
-        // -> MOTOR DIREITO
-        dir_dir = (m_dir <= 0); 
-        
+        // Verifica se a direção atual é pra frente ou pra trás
+        dir_esq = (m_esq >= 0);
+        dir_dir = (m_dir >= 0);
 
-        // Para evitar curto na Ponte H
-        if(prev_dir_esq != dir_esq || prev_dir_dir != dir_dir){
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, 0));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
-            ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM2, 0));
-            ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM2));
-            vTaskDelay(pdMS_TO_TICKS(10)); // Delay de segurança contra os curtos
+        // Proteção contra inversão brusca
+        // Compara a direção atual com a penúltima, caso sejam diferentes, zera o PWM antes de setar a nova direção
+        // Isso evita correntes em direções indesejadas, equivalente a desligar antes de tentar ligar de novo
+        if (dir_esq != prev_dir_esq || dir_dir != prev_dir_dir) {
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_R, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_L, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_R, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_L, 0);
+
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_R);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_L);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_R);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_L);
+
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
+
+        // Salvando a direção atual, pois abaixo atualizaremos a direção com base no controle e a direção atual vai virar a penúltima
         prev_dir_esq = dir_esq;
-        prev_dir_dir = dir_dir; 
+        prev_dir_dir = dir_dir;
 
+        // ===== MOTOR ESQUERDO =====
+        if (dir_esq) {
+            // A ordem em que setamos o PWM é sempre: desativar um lado e só depois ativar o outro
+            // Isso evita que dois lados possam estar ligados ao mesmo tempo
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_L, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_R, pwm_esq);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_L);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_R);
+        } else {
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_R, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_L, pwm_esq);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_R);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_ESQ_L);
+        }
 
+        // ===== MOTOR DIREITO =====
+        if (dir_dir) {
+            // A ordem em que setamos o PWM é sempre: desativar um lado e só depois ativar o outro
+            // Isso evita que dois lados possam estar ligados ao mesmo tempo
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_L, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_R, pwm_dir);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_L);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_R);
+        } else {
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_R, 0);
+            ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_L, pwm_dir);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_R);
+            ledc_update_duty(LEDC_MODE, LEDC_CH_DIR_L);
+        }
 
-        // -> MOTOR ESQUERDO
-        ESP_ERROR_CHECK(gpio_set_level(PDIG1, dir_esq)); // 1->frente, 0->ré
-        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM1, pwm_esq)); 
-        ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM1));
-
-        // -> MOTOR DIREITO
-        ESP_ERROR_CHECK(gpio_set_level(PDIG2, !dir_dir)); // Motor espelhado (0->frente, 1->ré)
-        ESP_ERROR_CHECK(ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_PWM2, pwm_dir)); 
-        ESP_ERROR_CHECK(ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_PWM2));
-
-        vTaskDelay(pdMS_TO_TICKS(20)); 
+        // Delay por segurança, mas uma vez pra evitar correntes inprevisíveis caso as direções mudem rapidammente
+        // Opcional no uso do driver, e extra, pois já temos verificações acima
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
@@ -179,7 +237,7 @@ static void my_platform_init(int argc, const char** argv) {
 
     // Criando a task que vai fazer o print dos valores dos eixos
     xTaskCreate(&PWMConfigurationAndValueUpdate, "PWM configuration", 4096, NULL, 1, NULL);
-    //xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
+    xTaskCreate(&TaskPrintAxis, "printAxis", 4096, NULL, 5, NULL);
 }
 
 static void my_platform_on_init_complete(void) {
