@@ -63,7 +63,6 @@ int apply_deadzone(int value, int deadzone) {
 
 // ===== TASK DE CONTROLE DOS MOTORES =====
 void PWMConfigurationAndValueUpdate(void *pvParameter) {
-
     // Timer PWM
     ledc_timer_config_t ledc_timer = {
         .speed_mode = LEDC_MODE,
@@ -129,7 +128,7 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
     gpio_set_level(DIR_LEN, 1);
 
     // Variáveis que guardam a direção atual e última penúltima direção
-    bool dir_esq = 1, dir_dir = 1, bool prev_dir_esq = 1, prev_dir_dir = 1;
+    bool direcaoAtualMotorEsquerdo = 1, direcaoAtualMotorDireito = 1, direcaoAnteriorMotorEsquerdo = 1, direcaoAnteriorMotorDireito = 1;
 
     // Valor de tolerância, se o joystick mandar um sinal menor que esse nada acontece, isso evita que o robô se mova erraticamente por conta de ruído
     int deadzone = 40;
@@ -139,10 +138,10 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
         float x_axis = apply_deadzone(left_x, deadzone);
         float y_axis = apply_deadzone(left_y, deadzone);
 
-        // K controla o quão suave o robô faz curvas
-        float k = 5.0;
+        // Controla o quão suave o robô faz curvas
+        float suavidadeDaCurva = 5.0;
         // Variável curva pode ser negativa ou positiva dependendo de x_axis pois: -512 < x_axis < 512
-        float curva = x_axis / k;
+        float curva = x_axis / suavidadeDaCurva;
 
         // Caso valor de curva seja positivo, motor esquerdo gira mais rápido que o direito, curva pra direita
         // Caso valor de curva seja negativo, motor direito gira mais rápido que o esquerdo, curva pra esquerda
@@ -160,13 +159,13 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
         uint32_t pwm_dir = (uint32_t)((fabs(m_dir) / AXIS_MAX) * TOP_PWM);
 
         // Verifica se a direção atual é pra frente ou pra trás
-        dir_esq = (m_esq >= 0);
-        dir_dir = (m_dir >= 0);
+        direcaoAtualMotorEsquerdo = (m_esq >= 0);
+        direcaoAtualMotorDireito = (m_dir >= 0);
 
         // Proteção contra inversão brusca
         // Compara a direção atual com a penúltima, caso sejam diferentes, zera o PWM antes de setar a nova direção
         // Isso evita correntes em direções indesejadas, equivalente a desligar antes de tentar ligar de novo
-        if (dir_esq != prev_dir_esq || dir_dir != prev_dir_dir) {
+        if (direcaoAtualMotorEsquerdo != direcaoAnteriorMotorEsquerdo || direcaoAtualMotorDireito != direcaoAnteriorMotorDireito) {
             ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_R, 0);
             ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_L, 0);
             ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_R, 0);
@@ -181,11 +180,11 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
         }
 
         // Salvando a direção atual, pois abaixo atualizaremos a direção com base no controle e a direção atual vai virar a penúltima
-        prev_dir_esq = dir_esq;
-        prev_dir_dir = dir_dir;
+        direcaoAnteriorMotorEsquerdo = direcaoAtualMotorEsquerdo;
+        direcaoAnteriorMotorDireito = direcaoAtualMotorDireito;
 
         // ===== MOTOR ESQUERDO =====
-        if (dir_esq) {
+        if (direcaoAtualMotorEsquerdo) {
             // A ordem em que setamos o PWM é sempre: desativar um lado e só depois ativar o outro
             // Isso evita que dois lados possam estar ligados ao mesmo tempo
             ledc_set_duty(LEDC_MODE, LEDC_CH_ESQ_L, 0);
@@ -200,7 +199,7 @@ void PWMConfigurationAndValueUpdate(void *pvParameter) {
         }
 
         // ===== MOTOR DIREITO =====
-        if (dir_dir) {
+        if (direcaoAtualMotorDireito) {
             // A ordem em que setamos o PWM é sempre: desativar um lado e só depois ativar o outro
             // Isso evita que dois lados possam estar ligados ao mesmo tempo
             ledc_set_duty(LEDC_MODE, LEDC_CH_DIR_L, 0);
