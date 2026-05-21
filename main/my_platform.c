@@ -313,8 +313,12 @@ static void my_platform_on_controller_data(uni_hid_device_t* d, uni_controller_t
 
     // Mudando a cor do led do controle para verde (8 bits)
     //                                     r,  g,  0
-    d->report_parser.set_lightbar_color(d, 0, 255, 0);
-    
+    // Esse if é pra garantir que o código vai funcionar mesmo se o controle não tiver 
+    // suporte a mudança de cor do led, ou seja, se a função for NULL, ele não tenta chamar e não dá erro
+    if(d->report_parser.set_lightbar_color != NULL){
+        d->report_parser.set_lightbar_color(d, 0, 255, 0);
+    }
+     
     // Extrai os dados do controle
     gp = &ctl->gamepad;
 

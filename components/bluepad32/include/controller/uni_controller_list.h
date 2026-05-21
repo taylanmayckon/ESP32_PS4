@@ -639,6 +639,7 @@ static const uni_controller_description_t arrControllers[] = {
         { MAKE_CONTROLLER_ID(0x2dc8, 0x6006), k_eControllerType_8BitdoController, NULL},  // 8BitDo Pro 2
         { MAKE_CONTROLLER_ID(0x2dc8, 0x6100), k_eControllerType_8BitdoController, NULL},  // 8BitDo SF30 Pro
         { MAKE_CONTROLLER_ID(0x2dc8, 0x6101), k_eControllerType_8BitdoController, NULL},  // 8BitDo SN30 Pro
+		{ MAKE_CONTROLLER_ID(0x2dc8, 0x301b), k_eControllerType_8BitdoController, NULL},  // 8BitDo Ultimate 2C
 
         // Generic gamepad
         { MAKE_CONTROLLER_ID(0x0a5c, 0x4502), k_eControllerType_GenericController, NULL},  // White-label mini gamepad received as gift in conference
